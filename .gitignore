@@ -1,7 +1,12 @@
 __pycache__/
 *.py[cod]
-.venv/
 .pytest_cache/
-saida/
-*.db
+.venv/
+venv/
 .env
+.env.*
+output/
+data/synthetic/
+*.db
+*.sqlite
+.DS_Store
