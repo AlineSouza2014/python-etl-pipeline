@@ -1,0 +1,44 @@
+name: Publicar base sintetica de 50 mil pedidos
+
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-dados.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  gerar-base:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Gerar base
+        run: python -m src.generate_data --count 50000 --output dados/pedidos_50k.csv
+      - name: Validar total
+        run: |
+          python - <<'PY'
+          import csv
+          with open("dados/pedidos_50k.csv", newline="", encoding="utf-8") as f:
+              ids = [row["pedido_id"] for row in csv.DictReader(f)]
+          assert len(ids) == 50000, len(ids)
+          assert len(set(ids)) == 50000
+          print("Base validada: 50.000 pedidos unicos")
+          PY
+      - name: Publicar CSV
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dados/pedidos_50k.csv
+          if ! git diff --cached --quiet; then
+            git commit -m "data: publica 50 mil pedidos sinteticos"
+            git push
+          fi
