@@ -1,76 +1,82 @@
-# ProspectAI | Pipeline ETL Incremental com Python e SQLite
+# ProspectAI | Retail Data Platform
 
-Projeto demonstrativo de **Engenharia de Dados**, com dados inteiramente fictícios. Implementa ingestão CSV, validação de esquema, rejeição de linhas inválidas e carga incremental com **upsert** em SQLite.
+**Portfólio de Engenharia de Dados | Python + SQL + SQLite | Sem Docker e sem custos cloud**
 
-## Volume de dados
+Projeto demonstrativo completo para um **e-commerce fictício**. Consolida clientes, produtos, pedidos e pagamentos, aplica regras de qualidade e produz indicadores comerciais auditáveis. **Todos os dados são sintéticos; nenhum cliente real está representado.**
 
-O repositório contém um exemplo pequeno para testes de regras e um **gerador determinístico de 50.000 pedidos fictícios**, distribuídos por 24 meses (2024–2025). A base grande é gerada localmente, evitando versionar arquivos volumosos.
+## Problema de negócio
+
+O varejista recebe quatro arquivos diariamente, com atualizações atrasadas, pedidos duplicados e valores inválidos. O negócio precisa de uma base confiável para analisar receita, produtos e regiões, sem contar vendas canceladas ou pagamentos pendentes.
 
 ## Arquitetura
 
 ```text
-Gerador de dados sintéticos -> CSV
-                               |
-                               v
-                   Validação de esquema e regras
-                               |
-                               v
-                     Conversão de tipos/datas
-                               |
-                               v
-                   SQLite: UPSERT por pedido_id
-                   (somente updated_at mais recente)
-                               |
-                               v
-                     Logs e métricas da carga
+4 CSVs sintéticos (customers, products, orders, payments)
+                    |
+             Python ingest
+                    |
+         Bronze: linhas brutas + hash + origem + run_id
+                    |
+         Validação: tipos, chaves, domínio e datas
+               /                \
+    Silver: UPSERT         Quarentena: rejects
+    por chave e updated_at
+               |
+         Gold: views SQL
+         receita por dia / categoria / região
+               |
+          Power BI (próximo projeto)
 ```
 
-## Tecnologias
+**Bronze** é append-only e preserva o histórico de cada execução. **Silver** mantém a versão mais recente de cada chave de negócio. **Gold** usa views SQL sobre Silver e considera apenas pedidos aprovados com pagamento confirmado. **Auditoria** registra início, fim, status e contagens por execução.
 
-Python 3.10+, SQL, SQLite, biblioteca padrão Python e unittest. Não requer dependências externas.
-
-## Executar com 50 mil pedidos
-
-Na raiz do repositório:
+## Executar (Python 3.10+)
 
 ```bash
-python -m src.generate_data --count 50000 --output dados/pedidos_50k.csv
-python -m src.pipeline --source dados/pedidos_50k.csv --target saida/pedidos.db
+python -m src.retail generate --rows 50000
+python -m src.retail load
 python -m unittest discover -s tests -v
 ```
 
-O resultado esperado é **50.000 pedidos distintos** no destino. Execute o pipeline novamente para demonstrar que o reprocessamento não duplica registros.
+Não há dependências externas. O gerador cria 5.000 clientes, 200 produtos, **50.000 pedidos**, 50.000 pagamentos, uma duplicidade antiga e um pedido inválido para demonstrar quarentena. A execução completa deve registrar **105.202 linhas brutas** e **1 rejeição**; Silver deve conter 50.000 pedidos distintos.
 
-Para testar as regras de rejeição e atualização de pedidos, utilize também o CSV pequeno:
+Consulte a base gerada com SQLite, DBeaver ou Python:
 
-```bash
-python -m src.pipeline --source dados/pedidos.csv --target saida/teste.db
+```python
+import sqlite3
+with sqlite3.connect('output/retail.db') as db:
+    print(db.execute('SELECT * FROM gold_category_sales ORDER BY revenue DESC').fetchall())
+    print(db.execute('SELECT * FROM runs ORDER BY started_at DESC LIMIT 1').fetchone())
 ```
 
-O exemplo pequeno possui cinco linhas, incluindo uma atualização de pedido e um valor inválido: o resultado esperado são 3 pedidos distintos e 1 registro rejeitado.
+## Cenários de qualidade e reprocessamento
 
-## Regras de qualidade
-
-- `pedido_id` deve ser um inteiro positivo.
-- `valor` não pode ser negativo.
-- `cliente` não pode estar vazio.
-- Datas devem ser válidas em formato ISO.
-- O registro de origem só atualiza o destino se `updated_at` for mais recente.
-- Reprocessar a mesma entrada não duplica pedidos.
+- Reexecução idempotente em Silver (não duplica chaves).
+- Registro antigo não substitui uma atualização mais recente.
+- Pedido com quantidade negativa vai para quarentena.
+- Mudança indevida de cabeçalho aborta a execução com rollback transacional.
+- Bronze armazena payload original, hash, arquivo e número da linha.
 
 ## Estrutura
 
 ```text
-dados/pedidos.csv          Exemplo de testes
-src/generate_data.py       Gerador de 50 mil pedidos
-src/pipeline.py            Validação e UPSERT
-tests/test_pipeline.py     Testes automatizados
-.gitignore                 Arquivos temporários ignorados
+src/retail.py                 geração, ingestão, validação e carga
+src/__init__.py              pacote Python
+tests/test_retail.py          testes de integração locais
+.github/workflows/tests.yml  CI de testes
+.gitignore                   exclusões de artefatos locais
 ```
 
-## Escopo e limitações
+## Decisões técnicas e limitações
 
-Este é um projeto demonstrativo local, não uma implantação de produção. O fluxo demonstra ingestão em lote e UPSERT; ainda não possui orquestração, monitoramento centralizado ou controle persistente de watermark para captura incremental na origem. Evoluções possíveis incluem PostgreSQL, Delta Lake, quarentena de registros e observabilidade.
+- **SQLite** foi escolhido para executar em qualquer notebook sem infraestrutura. O padrão pode ser adaptado para PostgreSQL ou Delta Lake.
+- A carga incremental é implementada como **UPSERT por chave de negócio e `updated_at`**, e não como CDC ou extração por watermark na origem.
+- Bronze é append-only: reprocessamentos repetem os registros brutos intencionalmente; Silver permanece idempotente.
+- A transação é atômica para cada execução; em caso de erro estrutural, a carga é revertida.
+- As regras de relacionamento entre fontes não aplicam quarentena de chaves órfãs nesta versão. Esse é um ponto de evolução.
+- As métricas são registradas em `runs`, sem monitoramento externo ou agendador.
+
+## Contato
 
 **ProspectAI** — Engenharia de Dados, BI e Automação  
-Contato: prospectai.solucoes@gmail.com
+prospectai.solucoes@gmail.com
